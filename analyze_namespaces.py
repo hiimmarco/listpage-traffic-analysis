@@ -118,16 +118,15 @@ def main():
     """
 
     # --- Encryption Logic ---
-    import hashlib
     import base64
     
     # Default password
     password = "listpages2025"
     
-    # Simple XOR encryption with SHA256 key
-    # Ideally use AES, but to avoid dependencies and keep it simple for this prototype:
+    # Simple XOR encryption with direct key bytes (HTTP compatible)
     def encrypt_data(data_str, pwd):
-        key = hashlib.sha256(pwd.encode('utf-8')).digest()
+        # Use password bytes directly as key (no SHA256 to avoid WebCrypto in JS)
+        key = pwd.encode('utf-8')
         data_bytes = data_str.encode('utf-8')
         encrypted = bytearray()
         for i, b in enumerate(data_bytes):
@@ -160,6 +159,9 @@ def main():
             
             .back-btn { display: none; margin-bottom: 20px; padding: 10px 15px; background-color: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
             .back-btn:hover { background-color: #34495e; }
+            
+            .logout-btn { float: right; padding: 5px 10px; background-color: #e74c3c; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 20px; }
+            .logout-btn:hover { background-color: #c0392b; }
             
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
@@ -213,6 +215,7 @@ def main():
     """
     
     html_middle = """
+            <button id="logoutBtn" class="logout-btn" onclick="logout()">Logout</button>
             <button id="backBtn" class="back-btn" onclick="goBack()">← Back to Overview</button>
             <div id="current-view-title">Overview</div>
             <div id="rec-container"></div>
@@ -230,42 +233,34 @@ def main():
 
         <script>
             // --- Decryption Logic ---
-            async function decryptData(encryptedBase64, password) {
-                // 1. Derive Key (SHA-256) - matching Python logic
-                const encoder = new TextEncoder();
-                const pwdData = encoder.encode(password);
-                const hashBuffer = await crypto.subtle.digest('SHA-256', pwdData);
-                const keyBytes = new Uint8Array(hashBuffer);
-
-                // 2. Decode Base64
+            function decryptData(encryptedBase64, password) {
+                // Key is just UTF-8 bytes of password (matches Python)
+                const keyBytes = new TextEncoder().encode(password);
+                
                 const binaryString = atob(encryptedBase64);
                 const len = binaryString.length;
                 const encryptedBytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {
-                    encryptedBytes[i] = binaryString.charCodeAt(i);
-                }
-
-                // 3. XOR Decrypt
+                for (let i = 0; i < len; i++) encryptedBytes[i] = binaryString.charCodeAt(i);
+                
                 const decryptedBytes = new Uint8Array(len);
                 for (let i = 0; i < len; i++) {
                     decryptedBytes[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length];
                 }
-
-                // 4. Decode text
-                const dec = new TextDecoder();
-                return dec.decode(decryptedBytes);
+                
+                return new TextDecoder().decode(decryptedBytes);
             }
 
             let reportData = null;
             let summaryOrder = null;
 
-            async function attemptLogin() {
+            function attemptLogin() {
                 const pwd = document.getElementById('passwordInput').value;
                 const errorMsg = document.getElementById('loginError');
                 const encryptedBlob = document.getElementById('encrypted-data').textContent.trim();
 
                 try {
-                    const jsonStr = await decryptData(encryptedBlob, pwd);
+                    // Decrypt (synchronous now)
+                    const jsonStr = decryptData(encryptedBlob, pwd);
                     const parsed = JSON.parse(jsonStr);
                     
                     if (parsed && parsed.report && parsed.summary_order) {
@@ -273,6 +268,9 @@ def main():
                         reportData = parsed.report;
                         summaryOrder = parsed.summary_order;
                         
+                        // Save to localStorage
+                        localStorage.setItem('report_password', pwd);
+
                         document.getElementById('login-overlay').style.display = 'none';
                         document.getElementById('mainContent').style.display = 'block';
                         renderOverview();
@@ -285,6 +283,20 @@ def main():
                     errorMsg.textContent = "Incorrect password.";
                 }
             }
+
+            function logout() {
+                localStorage.removeItem('report_password');
+                location.reload();
+            }
+
+            // Auto-login on load
+            window.addEventListener('load', () => {
+                const saved = localStorage.getItem('report_password');
+                if (saved) {
+                    document.getElementById('passwordInput').value = saved;
+                    attemptLogin();
+                }
+            });
 
             // --- App Logic ---
             const container = document.getElementById('table-container');
